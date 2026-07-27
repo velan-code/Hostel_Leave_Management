@@ -1,0 +1,15 @@
+# This file configures the analyzer for the Flutter app.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "build/**"
+    - ".dart_tool/**"
+    - "ios/Pods/**"
+    - "android/**"
+    - "**/*.g.dart"
+
+linter:
+  rules:
+    # avoid_print: false
+    # prefer_single_quotes: true

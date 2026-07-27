@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <!-- Dark Blue Background -->
+  <rect width="500" height="500" rx="80" fill="#142642" />
+  
+  <!-- Outer Arch -->
+  <path d="M 170 200 A 80 80 0 0 1 330 200 V 280" fill="none" stroke="#D4AF37" stroke-width="6" stroke-linecap="round"/>
+  
+  <!-- Central Building -->
+  <path d="M 170 280 V 220 L 210 200 V 170 H 290 V 200 L 330 220 V 280" fill="none" stroke="#D4AF37" stroke-width="8" stroke-linejoin="round"/>
+  <rect x="230" y="240" width="40" height="40" fill="none" stroke="#D4AF37" stroke-width="6" />
+  
+  <!-- Leaf -->
+  <path d="M 230 150 Q 250 110 280 120 Q 270 160 230 150 Z" fill="none" stroke="#D4AF37" stroke-width="5" stroke-linejoin="round"/>
+  
+  <!-- Minimal Hand Support Shape -->
+  <path d="M 130 250 Q 150 330 250 350 Q 350 330 370 250" fill="none" stroke="#D4AF37" stroke-width="8" stroke-linecap="round"/>
+  
+  <!-- Text -->
+  <text x="250" y="410" font-family="sans-serif" font-size="42" font-weight="bold" fill="#D4AF37" text-anchor="middle" letter-spacing="1.5">HOSTEL LEAVE</text>
+  <text x="250" y="460" font-family="sans-serif" font-size="42" font-weight="bold" fill="#D4AF37" text-anchor="middle" letter-spacing="1.5">MANAGEMENT</text>
+</svg>
