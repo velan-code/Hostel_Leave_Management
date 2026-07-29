@@ -4,21 +4,24 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:sizer/sizer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../routes/app_routes.dart';
 import '../../services/firebase_service.dart';
 import '../../services/system_notification_service.dart';
 import '../../services/push_notification_service.dart';
+import '../../services/auth_provider.dart';
 import '../../models/user_model.dart';
 
-class SplashScreen extends StatefulWidget {
+class SplashScreen extends ConsumerStatefulWidget {
   final bool forceShow; // Allow forcing splash screen for testing if needed
   const SplashScreen({super.key, this.forceShow = false});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen>
+class _SplashScreenState extends ConsumerState<SplashScreen>
     with TickerProviderStateMixin {
   late AnimationController _mainAnimController;
   late AnimationController _pulseAnimController;
@@ -73,7 +76,15 @@ class _SplashScreenState extends State<SplashScreen>
     // Load user session if already logged in
     final savedUser = await FirebaseService().loadSavedUserSession();
 
-    // If not forced and already seen splash on previous app open, bypass splash screen
+    try {
+      // Always initialize and request notification permissions on launch
+      await SystemNotificationService().requestNotificationPermission();
+      await PushNotificationService().initialize();
+    } catch (e) {
+      debugPrint('Error asking notification permissions: $e');
+    }
+
+    // If not forced and already seen splash on previous app open, bypass splash animation
     if (!widget.forceShow && hasSeenSplash) {
       setState(() => _isFirstOpen = false);
       if (mounted) {
@@ -82,16 +93,8 @@ class _SplashScreenState extends State<SplashScreen>
       return;
     }
 
-    // First open flow: Start animation & request notification permission
+    // First open flow: Start animation
     _mainAnimController.forward();
-
-    try {
-      // Ask permission for notifications on first open
-      await SystemNotificationService().requestNotificationPermission();
-      await PushNotificationService().initialize();
-    } catch (e) {
-      debugPrint('Error asking notification permissions: $e');
-    }
 
     // Save flag that splash has been shown
     await prefs.setBool('has_seen_splash', true);
@@ -105,15 +108,20 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _navigateNext(UserModel? user) {
-    if (user != null) {
-      final role = user.role.toLowerCase();
+    if (user != null && user.docId.isNotEmpty) {
+      ref.read(currentUserProvider.notifier).state = user;
+      final role = user.role.toLowerCase().trim();
       if (role == 'student') {
         context.go(AppRoutes.studentDashboard);
         return;
       } else if (role == 'warden') {
         context.go(AppRoutes.wardenDashboard);
         return;
-      } else if (role == 'hod') {
+      } else if (role == 'hod' ||
+          role == 'cc' ||
+          role == 'class mam' ||
+          role == 'faculty' ||
+          role == 'class coordinator') {
         context.go(AppRoutes.hodDashboard);
         return;
       } else if (role == 'admin') {
@@ -179,42 +187,7 @@ class _SplashScreenState extends State<SplashScreen>
                     // Top Logo Badge
                     Transform.scale(
                       scale: _logoScaleAnim.value,
-                      child: Container(
-                        width: 95,
-                        height: 95,
-                        padding: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(
-                            color: const Color(0xFFE2A748),
-                            width: 2.0,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFFE2A748).withAlpha(120),
-                              blurRadius: 20,
-                              spreadRadius: 2,
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(19),
-                          child: Image.asset(
-                            'assets/images/app_icon.png',
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: const Color(0xFF0F1C42),
-                                child: const Icon(
-                                  Icons.apartment_rounded,
-                                  color: Color(0xFFE2A748),
-                                  size: 44,
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
+                      child: const FlutterLogo(size: 80),
                     ),
 
                     SizedBox(height: 2.h),

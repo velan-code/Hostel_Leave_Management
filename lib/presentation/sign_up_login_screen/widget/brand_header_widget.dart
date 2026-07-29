@@ -12,15 +12,7 @@ class BrandHeaderWidget extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.domain, color: Colors.white, size: 22),
-            ),
+            const FlutterLogo(size: 32),
             const SizedBox(width: 10),
             Text(
               'Sec Hostel',

@@ -73,20 +73,7 @@ class _RoleSelectionScreenState extends ConsumerState<RoleSelectionScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 60,
-                height: 60,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(38),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(
-                  Icons.apartment_rounded,
-                  color: Colors.white,
-                  size: 36,
-                ),
-              ),
+              const FlutterLogo(size: 48),
               const SizedBox(height: 20),
               Text(
               'Sec Hostel',
@@ -148,29 +135,7 @@ class _RoleSelectionScreenState extends ConsumerState<RoleSelectionScreen> {
       children: [
         Row(
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F1C42),
-                borderRadius: BorderRadius.circular(12.0),
-                border: Border.all(
-                  color: const Color(0xFFE2A748).withAlpha(160),
-                  width: 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFE2A748).withAlpha(40),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.apartment_rounded,
-                color: Color(0xFFE2A748),
-                size: 24,
-              ),
-            ),
+            const FlutterLogo(size: 36),
             const SizedBox(width: 12),
             Text(
               'Sec Hostel',

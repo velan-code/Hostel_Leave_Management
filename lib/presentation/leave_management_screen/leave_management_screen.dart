@@ -1,12 +1,17 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:sizer/sizer.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:csv/csv.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../theme/app_theme.dart';
 import '../../models/leave_request_model.dart';
 import '../../models/complaint_model.dart';
 import '../../models/user_model.dart';
+import '../../models/student_model.dart';
 import '../../services/firebase_service.dart';
 import '../../services/auth_provider.dart';
 import '../../services/sound_service.dart';
@@ -21,12 +26,39 @@ class LeaveManagementScreen extends ConsumerStatefulWidget {
 }
 
 class _LeaveManagementScreenState extends ConsumerState<LeaveManagementScreen> {
-  int _activeTab = 0; // 0 = Leave Approvals, 1 = Student Complaints
+  @override
+  void initState() {
+    super.initState();
+    _checkAndRestoreSession();
+  }
+
+  Future<void> _checkAndRestoreSession() async {
+    if (ref.read(currentUserProvider) == null) {
+      final savedUser = await FirebaseService().loadSavedUserSession();
+      if (savedUser != null && mounted) {
+        ref.read(currentUserProvider.notifier).state = savedUser;
+      }
+    }
+  }
+
+  int _activeTab = 0; // 0 = Leave Approvals, 1 = Student Complaints, 2 = Attendance & Monitor Log
   String _filter = 'All';
   final List<String> _filters = ['All', 'Pending', 'Approved', 'Declined'];
 
   String _complaintFilter = 'All';
   final List<String> _complaintFilters = ['All', 'Pending', 'In Progress', 'Resolved'];
+
+  String _attendanceTimeframe = 'Day'; // 'Day', 'Week', 'Month'
+  String _attendanceStatusFilter = 'All'; // 'All', 'Present', 'Absent'
+  String _attendanceSearchQuery = '';
+  final TextEditingController _attendanceSearchController = TextEditingController();
+  bool _isExporting = false;
+
+  @override
+  void dispose() {
+    _attendanceSearchController.dispose();
+    super.dispose();
+  }
 
   void _approve(String id) {
     SoundService().playSuccess();
@@ -208,78 +240,94 @@ class _LeaveManagementScreenState extends ConsumerState<LeaveManagementScreen> {
                 final users = usersSnapshot.data ?? [];
                 final studentUsers = users.where((u) => u.role.toLowerCase() == 'student').toList();
 
-                final totalStudentsCount = studentUsers.isNotEmpty ? studentUsers.length : 3;
-                final approvedLeaveRequests = wardenModels.where((r) => r.status.toLowerCase() == 'approved').toList();
-                final onLeaveCount = approvedLeaveRequests.length;
-                final presentInHostelCount = (totalStudentsCount - onLeaveCount) < 0 ? 0 : (totalStudentsCount - onLeaveCount);
+                return StreamBuilder<List<StudentModel>>(
+                  stream: FirebaseService().studentsStream,
+                  initialData: FirebaseService().currentStudents,
+                  builder: (context, studentsSnapshot) {
+                    final studentsList = studentsSnapshot.data ?? [];
 
-                final filtered = _filter == 'All'
-                    ? requests
-                    : requests
-                        .where((r) {
-                            final s = r['status'].toString().toLowerCase();
-                            switch (_filter) {
-                              case 'Pending':
-                                return s.startsWith('pending');
-                              case 'Approved':
-                                return s == 'approved';
-                              case 'Declined':
-                                return s.startsWith('declined');
-                              default:
-                                return true;
-                            }
-                          })
-                        .toList();
+                    final totalStudentsCount = studentUsers.isNotEmpty ? studentUsers.length : 3;
+                    final approvedLeaveRequests = wardenModels.where((r) => r.status.toLowerCase() == 'approved').toList();
+                    final onLeaveCount = approvedLeaveRequests.length;
+                    final presentInHostelCount = (totalStudentsCount - onLeaveCount) < 0 ? 0 : (totalStudentsCount - onLeaveCount);
 
-                final pendingCount =
-                    wardenModels.where((r) => !r.wardenSigned && !r.status.toLowerCase().startsWith('declined')).length;
+                    final filtered = _filter == 'All'
+                        ? requests
+                        : requests
+                            .where((r) {
+                                final s = r['status'].toString().toLowerCase();
+                                switch (_filter) {
+                                  case 'Pending':
+                                    return s.startsWith('pending');
+                                  case 'Approved':
+                                    return s == 'approved';
+                                  case 'Declined':
+                                    return s.startsWith('declined');
+                                  default:
+                                    return true;
+                                }
+                              })
+                            .toList();
 
-                return Scaffold(
-                  backgroundColor: AppTheme.backgroundLight,
-                  body: SafeArea(
-                    child: Column(
-                      children: [
-                        _buildHeader(context, pendingCount, currentUser),
-                        _buildTabToggle(pendingComplaintsCount),
-                        if (_activeTab == 0) ...[
-                          _buildOccupancyCards(
-                            totalStudents: totalStudentsCount,
-                            presentInHostel: presentInHostelCount,
-                            onLeave: onLeaveCount,
-                          ),
-                          _buildFilterChips(),
-                          Expanded(
-                            child: filtered.isEmpty
-                                ? _buildEmpty()
-                                : ListView.builder(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 4.w,
-                                      vertical: 1.h,
-                                    ),
-                                    itemCount: filtered.length,
-                                    itemBuilder: (_, i) {
-                                      final req = filtered[i];
-                                      return Padding(
-                                        padding: EdgeInsets.only(bottom: 1.5.h),
-                                        child: _WardenLeaveCard(
-                                          request: req,
-                                          onApprove: () => _approve(req['docId'] ?? req['id']),
-                                          onDecline: () =>
-                                              _showDeclineDialog(req['docId'] ?? req['id']),
-                                          onTapCard: () => _showWardenDetailBottomSheet(context, req),
+                    final pendingCount =
+                        wardenModels.where((r) => !r.wardenSigned && !r.status.toLowerCase().startsWith('declined')).length;
+
+                    return Scaffold(
+                      backgroundColor: AppTheme.backgroundLight,
+                      body: SafeArea(
+                        child: Column(
+                          children: [
+                            _buildHeader(context, pendingCount, currentUser),
+                            _buildTabToggle(pendingComplaintsCount),
+                            if (_activeTab == 0) ...[
+                              _buildOccupancyCards(
+                                totalStudents: totalStudentsCount,
+                                presentInHostel: presentInHostelCount,
+                                onLeave: onLeaveCount,
+                              ),
+                              _buildFilterChips(),
+                              Expanded(
+                                child: filtered.isEmpty
+                                    ? _buildEmpty()
+                                    : ListView.builder(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 4.w,
+                                          vertical: 1.h,
                                         ),
-                                      );
-                                    },
-                                  ),
-                          ),
-                        ] else ...[
-                          Expanded(
-                            child: _buildComplaintsTab(allComplaints),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                                        itemCount: filtered.length,
+                                        itemBuilder: (_, i) {
+                                          final req = filtered[i];
+                                          return Padding(
+                                            padding: EdgeInsets.only(bottom: 1.5.h),
+                                            child: _WardenLeaveCard(
+                                              request: req,
+                                              onApprove: () => _approve(req['docId'] ?? req['id']),
+                                              onDecline: () =>
+                                                  _showDeclineDialog(req['docId'] ?? req['id']),
+                                              onTapCard: () => _showWardenDetailBottomSheet(context, req),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                              ),
+                            ] else if (_activeTab == 1) ...[
+                              Expanded(
+                                child: _buildComplaintsTab(allComplaints),
+                              ),
+                            ] else ...[
+                              Expanded(
+                                child: _buildAttendanceTab(
+                                  studentUsers: studentUsers,
+                                  allStudents: studentsList,
+                                  allRequests: wardenModels,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             );
@@ -512,10 +560,10 @@ class _LeaveManagementScreenState extends ConsumerState<LeaveManagementScreen> {
                   ),
                   child: Center(
                     child: Text(
-                      'Leave Approvals',
+                      'Approvals',
                       style: GoogleFonts.dmSans(
                         fontWeight: FontWeight.w700,
-                        fontSize: 10.5.sp,
+                        fontSize: 9.5.sp,
                         color: _activeTab == 0 ? Colors.white : AppTheme.textSecondary,
                       ),
                     ),
@@ -536,17 +584,17 @@ class _LeaveManagementScreenState extends ConsumerState<LeaveManagementScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        'Student Complaints',
+                        'Complaints',
                         style: GoogleFonts.dmSans(
                           fontWeight: FontWeight.w700,
-                          fontSize: 10.5.sp,
+                          fontSize: 9.5.sp,
                           color: _activeTab == 1 ? Colors.white : AppTheme.textSecondary,
                         ),
                       ),
                       if (pendingComplaintsCount > 0) ...[
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                           decoration: BoxDecoration(
                             color: Colors.redAccent,
                             borderRadius: BorderRadius.circular(10),
@@ -555,13 +603,46 @@ class _LeaveManagementScreenState extends ConsumerState<LeaveManagementScreen> {
                             '$pendingComplaintsCount',
                             style: GoogleFonts.dmSans(
                               color: Colors.white,
-                              fontSize: 8.5.sp,
+                              fontSize: 8.sp,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
                       ],
                     ],
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: GestureDetector(
+                onTap: () => setState(() => _activeTab = 2),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _activeTab == 2 ? const Color(0xFF0284C7) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.insights_rounded,
+                          size: 13,
+                          color: _activeTab == 2 ? Colors.white : AppTheme.textSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Attendance',
+                          style: GoogleFonts.dmSans(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 9.5.sp,
+                            color: _activeTab == 2 ? Colors.white : AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1456,6 +1537,487 @@ class _LeaveManagementScreenState extends ConsumerState<LeaveManagementScreen> {
       ),
     );
   }
+
+  bool _isLeaveActiveInTimeframe(LeaveRequestModel req, String timeframe) {
+    final status = req.status.toLowerCase();
+    final isApproved = status == 'approved' || req.wardenSigned;
+    if (!isApproved) return false;
+
+    final now = DateTime.now();
+    final reqDate = DateTime.fromMillisecondsSinceEpoch(req.createdAt);
+
+    if (timeframe == 'Day') {
+      final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      if (req.fromDate.contains(todayStr) || req.toDate.contains(todayStr) || req.submittedOn.contains(todayStr)) {
+        return true;
+      }
+      final diffHours = now.difference(reqDate).inHours;
+      return diffHours < 24;
+    } else if (timeframe == 'Week') {
+      final diffDays = now.difference(reqDate).inDays;
+      return diffDays <= 7;
+    } else if (timeframe == 'Month') {
+      final diffDays = now.difference(reqDate).inDays;
+      return diffDays <= 30;
+    }
+    return true;
+  }
+
+  Future<void> _exportAttendanceCsv({
+    required List<StudentModel> allStudents,
+    required List<LeaveRequestModel> allRequests,
+    required String timeframe,
+  }) async {
+    setState(() => _isExporting = true);
+    try {
+      final now = DateTime.now();
+      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      
+      final List<List<dynamic>> csvRows = [];
+      
+      csvRows.add(['SEC HOSTEL - STUDENT ATTENDANCE & MONITORING REPORT']);
+      csvRows.add(['Report Date:', dateStr, 'Timeframe Scope:', timeframe.toUpperCase()]);
+      csvRows.add([]);
+      
+      csvRows.add([
+        'S.No',
+        'Student Name',
+        'Roll No / ERP',
+        'Department',
+        'Year Batch',
+        'Hostel Block',
+        'Room No',
+        'Attendance Status ($timeframe)',
+        'Leave Type',
+        'Leave Dates (From - To)',
+        'Leave Reason',
+        'Assigned CC',
+        'Assigned HOD',
+        'Assigned Warden',
+        'Approval Status',
+      ]);
+
+      int index = 1;
+      int presentCount = 0;
+      int absentCount = 0;
+
+      for (final student in allStudents) {
+        final studentLeaves = allRequests.where((r) {
+          final isMatch = (r.rollNo.isNotEmpty && r.rollNo.toLowerCase() == student.rollNo.toLowerCase()) ||
+              (r.studentName.isNotEmpty && r.studentName.toLowerCase() == student.name.toLowerCase());
+          if (!isMatch) return false;
+          return _isLeaveActiveInTimeframe(r, timeframe);
+        }).toList();
+
+        final isAbsent = studentLeaves.isNotEmpty;
+        final activeLeave = isAbsent ? studentLeaves.first : null;
+
+        if (isAbsent) {
+          absentCount++;
+        } else {
+          presentCount++;
+        }
+
+        csvRows.add([
+          index++,
+          student.name.isNotEmpty ? student.name : 'Student',
+          student.rollNo.isNotEmpty ? student.rollNo : 'N/A',
+          student.department.isNotEmpty ? student.department : 'Computer Science',
+          student.year.isNotEmpty ? student.year : '3rd Year',
+          student.hostelBlock.isNotEmpty ? student.hostelBlock : 'Block A',
+          student.roomNo.isNotEmpty ? student.roomNo : '101',
+          isAbsent ? 'ABSENT (On Leave)' : 'PRESENT (In Hostel)',
+          isAbsent ? (activeLeave?.type ?? 'Home Visit') : '-',
+          isAbsent ? '${activeLeave?.fromDate ?? ''} to ${activeLeave?.toDate ?? ''}' : '-',
+          isAbsent ? (activeLeave?.reason ?? '-') : '-',
+          student.assignedCcName.isNotEmpty ? student.assignedCcName : (activeLeave?.assignedCcName ?? 'CC'),
+          student.assignedHodName.isNotEmpty ? student.assignedHodName : (activeLeave?.assignedHodName ?? 'HOD'),
+          student.assignedWardenName.isNotEmpty ? student.assignedWardenName : (activeLeave?.assignedWardenName ?? 'Warden'),
+          isAbsent ? (activeLeave?.status ?? 'approved') : 'Active In Hostel',
+        ]);
+      }
+
+      csvRows.add([]);
+      csvRows.add(['ATTENDANCE METRICS SUMMARY']);
+      csvRows.add(['Total Enrolled Students:', allStudents.length]);
+      csvRows.add(['Present in Hostel:', presentCount]);
+      csvRows.add(['Absent (On Leave):', absentCount]);
+      final occupancyRate = allStudents.isNotEmpty ? ((presentCount / allStudents.length) * 100).toStringAsFixed(1) : '100';
+      csvRows.add(['Hostel Occupancy Rate:', '$occupancyRate%']);
+
+      final String csvData = const ListToCsvConverter().convert(csvRows);
+      
+      final tempDir = await getTemporaryDirectory();
+      final filePath = '${tempDir.path}/Sec_Hostel_Attendance_${timeframe}_$dateStr.csv';
+      final file = File(filePath);
+      await file.writeAsString(csvData);
+
+      if (mounted) {
+        final mediaSize = MediaQuery.of(context).size;
+        final origin = Rect.fromLTWH(
+          mediaSize.width * 0.1,
+          mediaSize.height * 0.3,
+          mediaSize.width * 0.8,
+          mediaSize.height * 0.3,
+        );
+
+        await Share.shareXFiles(
+          [XFile(filePath)],
+          text: 'Sec Hostel Attendance Report ($timeframe) - $dateStr',
+          subject: 'Sec Hostel Attendance Report ($timeframe)',
+          sharePositionOrigin: origin,
+        );
+      }
+    } catch (e) {
+      debugPrint('Error exporting CSV: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error exporting Excel/CSV report: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Widget _buildAttendanceTab({
+    required List<UserModel> studentUsers,
+    required List<StudentModel> allStudents,
+    required List<LeaveRequestModel> allRequests,
+  }) {
+    final List<StudentModel> effectiveStudents = allStudents.isNotEmpty
+        ? allStudents
+        : (studentUsers.isNotEmpty
+            ? studentUsers
+                .map((u) => StudentModel(
+                      docId: u.docId,
+                      id: u.erpNo.isNotEmpty ? u.erpNo : (u.id.isNotEmpty ? u.id : 'STU001'),
+                      name: u.name,
+                      email: u.email,
+                      department: u.department.isNotEmpty ? u.department : 'Computer Science',
+                      year: u.year.isNotEmpty ? u.year : '3rd Year',
+                      roomNo: '101',
+                      hostelBlock: 'Block A',
+                    ))
+                .toList()
+            : [
+                StudentModel(
+                  docId: 'stu_1',
+                  id: 'CS2021045',
+                  name: 'Rahul Sharma',
+                  email: 'rahul@sec.edu',
+                  department: 'Computer Science',
+                  year: '3rd Year',
+                  roomNo: '204',
+                  hostelBlock: 'Block A',
+                  assignedWardenName: 'Siva Sir',
+                ),
+                StudentModel(
+                  docId: 'stu_2',
+                  id: 'IT2021012',
+                  name: 'Priya Ram',
+                  email: 'priya@sec.edu',
+                  department: 'Information Tech',
+                  year: '2nd Year',
+                  roomNo: '108',
+                  hostelBlock: 'Block B',
+                  assignedWardenName: 'Siva Sir',
+                ),
+                StudentModel(
+                  docId: 'stu_3',
+                  id: 'ECE2021089',
+                  name: 'Karthik Raja',
+                  email: 'karthik@sec.edu',
+                  department: 'ECE',
+                  year: '4th Year',
+                  roomNo: '312',
+                  hostelBlock: 'Block A',
+                  assignedWardenName: 'Siva Sir',
+                ),
+              ]);
+
+    final List<Map<String, dynamic>> studentAttendanceStatus = [];
+    int absentCount = 0;
+    int presentCount = 0;
+
+    for (final student in effectiveStudents) {
+      final studentLeaves = allRequests.where((r) {
+        final isMatch = (r.rollNo.isNotEmpty && r.rollNo.toLowerCase() == student.rollNo.toLowerCase()) ||
+            (r.studentName.isNotEmpty && r.studentName.toLowerCase() == student.name.toLowerCase());
+        if (!isMatch) return false;
+        return _isLeaveActiveInTimeframe(r, _attendanceTimeframe);
+      }).toList();
+
+      final isAbsent = studentLeaves.isNotEmpty;
+      final activeLeave = isAbsent ? studentLeaves.first : null;
+
+      if (isAbsent) {
+        absentCount++;
+      } else {
+        presentCount++;
+      }
+
+      studentAttendanceStatus.add({
+        'student': student,
+        'isAbsent': isAbsent,
+        'activeLeave': activeLeave,
+      });
+    }
+
+    final query = _attendanceSearchQuery.trim().toLowerCase();
+    final filteredStatus = studentAttendanceStatus.where((item) {
+      final StudentModel s = item['student'];
+      final isAbsent = item['isAbsent'] as bool;
+
+      if (_attendanceStatusFilter == 'Present' && isAbsent) return false;
+      if (_attendanceStatusFilter == 'Absent' && !isAbsent) return false;
+
+      if (query.isEmpty) return true;
+      return s.name.toLowerCase().contains(query) ||
+          s.rollNo.toLowerCase().contains(query) ||
+          s.roomNo.toLowerCase().contains(query) ||
+          s.department.toLowerCase().contains(query);
+    }).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 0.8.h),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFCBD5E1)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: ['Day', 'Week', 'Month'].map((t) {
+                      final isSelected = _attendanceTimeframe == t;
+                      return GestureDetector(
+                        onTap: () => setState(() => _attendanceTimeframe = t),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: isSelected ? const Color(0xFF0284C7) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            t == 'Day' ? 'Today' : (t == 'Week' ? 'Week' : 'Month'),
+                            style: GoogleFonts.dmSans(
+                              fontSize: 9.sp,
+                              fontWeight: FontWeight.w700,
+                              color: isSelected ? Colors.white : AppTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              ElevatedButton.icon(
+                onPressed: _isExporting
+                    ? null
+                    : () => _exportAttendanceCsv(
+                          allStudents: effectiveStudents,
+                          allRequests: allRequests,
+                          timeframe: _attendanceTimeframe,
+                        ),
+                icon: _isExporting
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.table_chart_rounded, size: 15, color: Colors.white),
+                label: Text(
+                  _isExporting ? '...' : 'Export Excel',
+                  style: GoogleFonts.dmSans(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 9.sp,
+                    color: Colors.white,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 2,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 4.w),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0F1C42), Color(0xFF1E293B)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildAttendanceMetric('Total Enrolled', effectiveStudents.length.toString(), Colors.white, Icons.groups_rounded),
+                Container(width: 1, height: 30, color: Colors.white24),
+                _buildAttendanceMetric('Present ($presentCount)', '${effectiveStudents.isNotEmpty ? ((presentCount / effectiveStudents.length) * 100).toStringAsFixed(0) : 100}%', const Color(0xFF34D399), Icons.check_circle_rounded),
+                Container(width: 1, height: 30, color: Colors.white24),
+                _buildAttendanceMetric('Absent ($absentCount)', '${effectiveStudents.isNotEmpty ? ((absentCount / effectiveStudents.length) * 100).toStringAsFixed(0) : 0}%', const Color(0xFFF87171), Icons.person_off_rounded),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 4.w),
+          child: Column(
+            children: [
+              TextField(
+                controller: _attendanceSearchController,
+                onChanged: (val) => setState(() => _attendanceSearchQuery = val),
+                style: GoogleFonts.dmSans(fontSize: 11.sp),
+                decoration: InputDecoration(
+                  hintText: 'Search student name, roll no, room...',
+                  hintStyle: GoogleFonts.dmSans(fontSize: 10.sp, color: AppTheme.textSecondary),
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20, color: AppTheme.textSecondary),
+                  suffixIcon: _attendanceSearchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 18),
+                          onPressed: () {
+                            _attendanceSearchController.clear();
+                            setState(() => _attendanceSearchQuery = '');
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: AppTheme.surfaceLight,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: ['All', 'Present', 'Absent'].map((st) {
+                  final isSel = _attendanceStatusFilter == st;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(
+                        st == 'All' ? 'All (${effectiveStudents.length})' : (st == 'Present' ? 'Present ($presentCount)' : 'Absent ($absentCount)'),
+                        style: GoogleFonts.dmSans(
+                          fontSize: 9.sp,
+                          fontWeight: FontWeight.w700,
+                          color: isSel ? Colors.white : AppTheme.textPrimary,
+                        ),
+                      ),
+                      selected: isSel,
+                      selectedColor: st == 'Present' ? const Color(0xFF10B981) : (st == 'Absent' ? const Color(0xFFEF4444) : const Color(0xFF0284C7)),
+                      backgroundColor: AppTheme.surfaceLight,
+                      onSelected: (_) => setState(() => _attendanceStatusFilter = st),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: filteredStatus.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.person_search_rounded, size: 48, color: AppTheme.textSecondary),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No student records matching filter',
+                        style: GoogleFonts.dmSans(
+                          fontSize: 12.sp,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 0.5.h),
+                  itemCount: filteredStatus.length,
+                  itemBuilder: (ctx, idx) {
+                    final item = filteredStatus[idx];
+                    final StudentModel student = item['student'];
+                    final bool isAbsent = item['isAbsent'];
+                    final LeaveRequestModel? activeLeave = item['activeLeave'];
+
+                    return _AttendanceStudentCard(
+                      student: student,
+                      isAbsent: isAbsent,
+                      activeLeave: activeLeave,
+                      timeframe: _attendanceTimeframe,
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAttendanceMetric(String label, String value, Color color, IconData icon) {
+    return Column(
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(
+              value,
+              style: GoogleFonts.dmSans(
+                fontSize: 14.sp,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: GoogleFonts.dmSans(
+            fontSize: 8.5.sp,
+            color: Colors.white70,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _WardenLeaveCard extends StatelessWidget {
@@ -1848,6 +2410,205 @@ class _OccupancyStat extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttendanceStudentCard extends StatelessWidget {
+  final StudentModel student;
+  final bool isAbsent;
+  final LeaveRequestModel? activeLeave;
+  final String timeframe;
+
+  const _AttendanceStudentCard({
+    required this.student,
+    required this.isAbsent,
+    this.activeLeave,
+    required this.timeframe,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = isAbsent ? const Color(0xFFEF4444) : const Color(0xFF10B981);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isAbsent ? const Color(0xFFFCA5A5) : const Color(0xFFA7F3D0),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(8),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: statusColor.withAlpha(25),
+                child: Text(
+                  student.name.isNotEmpty ? student.name[0].toUpperCase() : 'S',
+                  style: GoogleFonts.dmSans(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.sp,
+                    color: statusColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            student.name.isNotEmpty ? student.name : 'Student',
+                            style: GoogleFonts.dmSans(
+                              fontSize: 11.5.sp,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.textPrimary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: statusColor.withAlpha(20),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: statusColor.withAlpha(80)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isAbsent ? Icons.directions_walk_rounded : Icons.check_circle_rounded,
+                                size: 12,
+                                color: statusColor,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                isAbsent ? 'ABSENT' : 'PRESENT',
+                                style: GoogleFonts.dmSans(
+                                  fontSize: 8.5.sp,
+                                  fontWeight: FontWeight.w800,
+                                  color: statusColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Roll: ${student.rollNo.isNotEmpty ? student.rollNo : 'N/A'} • ${student.department.isNotEmpty ? student.department : 'CS'} (${student.year})',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 9.5.sp,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.meeting_room_rounded, size: 14, color: AppTheme.textSecondary),
+              const SizedBox(width: 4),
+              Text(
+                'Room ${student.roomNo.isNotEmpty ? student.roomNo : '101'}, ${student.hostelBlock.isNotEmpty ? student.hostelBlock : 'Block A'}',
+                style: GoogleFonts.dmSans(
+                  fontSize: 9.5.sp,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              if (isAbsent && activeLeave != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    activeLeave!.type,
+                    style: GoogleFonts.dmSans(
+                      fontSize: 8.5.sp,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFFD97706),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (isAbsent && activeLeave != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFCA5A5)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.date_range_rounded, size: 13, color: Color(0xFFDC2626)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Leave Dates: ${activeLeave!.fromDate} to ${activeLeave!.toDate}',
+                        style: GoogleFonts.dmSans(
+                          fontSize: 9.sp,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF991B1B),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (activeLeave!.reason.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      'Reason: "${activeLeave!.reason}"',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 8.5.sp,
+                        fontStyle: FontStyle.italic,
+                        color: const Color(0xFF7F1D1D),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

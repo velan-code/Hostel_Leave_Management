@@ -20,6 +20,21 @@ class HodDashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _HodDashboardScreenState extends ConsumerState<HodDashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAndRestoreSession();
+  }
+
+  Future<void> _checkAndRestoreSession() async {
+    if (ref.read(currentUserProvider) == null) {
+      final savedUser = await FirebaseService().loadSavedUserSession();
+      if (savedUser != null && mounted) {
+        ref.read(currentUserProvider.notifier).state = savedUser;
+      }
+    }
+  }
+
   void _signRequest(String id, bool isCc) {
     SoundService().playSuccess();
     FirebaseService().updateLeaveRequestStatus(

@@ -27,6 +27,21 @@ class LeaveRequestScreen extends ConsumerStatefulWidget {
 }
 
 class _LeaveRequestScreenState extends ConsumerState<LeaveRequestScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAndRestoreSession();
+  }
+
+  Future<void> _checkAndRestoreSession() async {
+    if (ref.read(currentUserProvider) == null) {
+      final savedUser = await FirebaseService().loadSavedUserSession();
+      if (savedUser != null && mounted) {
+        ref.read(currentUserProvider.notifier).state = savedUser;
+      }
+    }
+  }
+
   void _addLeaveRequest(
     Map<String, dynamic> request,
     UserModel? currentUser,

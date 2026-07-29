@@ -24,6 +24,21 @@ class AdminDashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAndRestoreSession();
+  }
+
+  Future<void> _checkAndRestoreSession() async {
+    if (ref.read(currentUserProvider) == null) {
+      final savedUser = await FirebaseService().loadSavedUserSession();
+      if (savedUser != null && mounted) {
+        ref.read(currentUserProvider.notifier).state = savedUser;
+      }
+    }
+  }
+
   int _selectedTab = 0;
   final List<String> _tabs = [
     'All Requests',

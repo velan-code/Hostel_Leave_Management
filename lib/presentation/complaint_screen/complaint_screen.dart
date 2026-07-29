@@ -36,6 +36,7 @@ class _ComplaintScreenState extends ConsumerState<ComplaintScreen> {
   @override
   void initState() {
     super.initState();
+    _checkAndRestoreSession();
     final currentUser = ref.read(currentUserProvider);
     final students = FirebaseService().currentStudents;
     final matchedStudent = students.firstWhere(
@@ -64,6 +65,21 @@ class _ComplaintScreenState extends ConsumerState<ComplaintScreen> {
     _nameController = TextEditingController(text: initialName);
     _idController = TextEditingController(text: initialId);
     _descriptionController = TextEditingController();
+  }
+
+  Future<void> _checkAndRestoreSession() async {
+    if (ref.read(currentUserProvider) == null) {
+      final savedUser = await FirebaseService().loadSavedUserSession();
+      if (savedUser != null && mounted) {
+        ref.read(currentUserProvider.notifier).state = savedUser;
+        if (_nameController.text.isEmpty) {
+          _nameController.text = savedUser.name;
+        }
+        if (_idController.text.isEmpty) {
+          _idController.text = savedUser.erpNo.isNotEmpty ? savedUser.erpNo : savedUser.id;
+        }
+      }
+    }
   }
 
   @override
