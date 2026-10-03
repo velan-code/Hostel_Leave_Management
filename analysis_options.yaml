@@ -8,6 +8,9 @@ analyzer:
     - "ios/Pods/**"
     - "android/**"
     - "**/*.g.dart"
+    - ios/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:
